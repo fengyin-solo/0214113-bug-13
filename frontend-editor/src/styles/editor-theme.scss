@@ -91,14 +91,41 @@
   width: 0;
   display: inline-block;
   overflow: hidden;
-  transition: all $t-fast $ease;
+  vertical-align: top;
+  transition: opacity $t-fast $ease;
+
+  &--block {
+    line-height: $lh;
+    min-height: 1em;
+  }
 }
 
 .md-syntax-visible {
   font-size: inherit;
   opacity: 0.3;
   font-family: $font-mono;
-  transition: all $t-fast $ease;
+  transition: opacity $t-fast $ease;
+}
+
+.md-fence-mark {
+  font-family: $font-mono;
+  font-size: $fs-sm;
+  white-space: pre;
+
+  &--hidden {
+    font-size: $fs-sm;
+    opacity: 0;
+    width: 0;
+    display: inline-block;
+    overflow: hidden;
+    vertical-align: top;
+    transition: opacity $t-fast $ease;
+  }
+
+  &--visible {
+    opacity: 0.3;
+    transition: opacity $t-fast $ease;
+  }
 }
 
 // === Code Block ===
@@ -107,11 +134,27 @@
   font-size: $fs-sm;
   background: $bg-code-block;
   color: #d4d4d8;
-  border-radius: $r-lg;
-  padding: $sp-4;
-  margin: $sp-2 0;
+  border-radius: 0;
+  padding: 0 $sp-4;
+  margin: 0;
 
   .cm-line { padding: 0; }
+}
+
+.cm-line:first-child.md-code-block,
+.cm-line:not(.md-code-block) + .md-code-block {
+  border-top-left-radius: $r-lg;
+  border-top-right-radius: $r-lg;
+  padding-top: $sp-4;
+  margin-top: $sp-2;
+}
+
+.md-code-block:last-child,
+.md-code-block:has(+ .cm-line:not(.md-code-block)) {
+  border-bottom-left-radius: $r-lg;
+  border-bottom-right-radius: $r-lg;
+  padding-bottom: $sp-4;
+  margin-bottom: $sp-2;
 }
 
 // === Blockquote ===
@@ -119,7 +162,17 @@
   border-left: 2px solid $accent;
   padding-left: $sp-4;
   color: $text-2;
-  margin: $sp-2 0;
+  margin: 0;
+}
+
+.cm-line:first-child.md-blockquote,
+.cm-line:not(.md-blockquote) + .md-blockquote {
+  margin-top: $sp-2;
+}
+
+.md-blockquote:last-child,
+.md-blockquote:has(+ .cm-line:not(.md-blockquote)) {
+  margin-bottom: $sp-2;
 }
 
 .md-blockquote-mark {

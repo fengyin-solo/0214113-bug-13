@@ -1,10 +1,15 @@
 import {
+  EditorView,
   ViewPlugin,
   Decoration,
   WidgetType
 } from '@codemirror/view'
 import { RangeSetBuilder } from '@codemirror/state'
-import { parseMarkdownRegions } from './markdown-parser'
+import {
+  getSelectionLineRanges,
+  isRegionSelected,
+  parseMarkdownRegions
+} from './markdown-parser'
 
 /**
  * HR Widget — renders a horizontal rule
@@ -140,7 +145,11 @@ const italicDeco = Decoration.mark({ class: 'md-italic' })
 const strikeDeco = Decoration.mark({ class: 'md-strikethrough' })
 const inlineCodeDeco = Decoration.mark({ class: 'md-inline-code' })
 const linkDeco = Decoration.mark({ class: 'md-link' })
-const blockquoteDeco = Decoration.mark({ class: 'md-blockquote' })
+const blockquoteDeco = Decoration.line({ class: 'md-blockquote' })
+const blockquoteMarkHiddenDeco = Decoration.mark({ class: 'md-syntax-hidden md-syntax-hidden--block' })
+const blockquoteMarkVisibleDeco = Decoration.mark({ class: 'md-syntax-visible' })
+const fenceMarkHiddenDeco = Decoration.mark({ class: 'md-fence-mark md-fence-mark--hidden' })
+const fenceMarkVisibleDeco = Decoration.mark({ class: 'md-syntax-visible md-fence-mark--visible' })
 const syntaxHiddenDeco = Decoration.mark({ class: 'md-syntax-hidden' })
 const syntaxVisibleDeco = Decoration.mark({ class: 'md-syntax-visible' })
 const codeBlockDeco = Decoration.line({ class: 'md-code-block' })
@@ -148,42 +157,58 @@ const listMarkerDeco = Decoration.mark({ class: 'md-list-marker' })
 const headingMarkDeco = Decoration.mark({ class: 'md-heading-mark' })
 
 /**
- * Get the line range that the cursor is on.
- * Returns { from, to } of the current line(s) covered by all selections.
+ * Capture the visual line aligned with the scroller before a decoration-only
+ * update, then restore it after CodeMirror has rebuilt the DOM. Document edits
+ * and undo/redo use the editor's own change anchor instead.
  */
-function getCursorLineRanges(state) {
-  const ranges = []
-  for (const sel of state.selection.ranges) {
-    const lineFrom = state.doc.lineAt(sel.from)
-    const lineTo = state.doc.lineAt(sel.to)
-    ranges.push({ from: lineFrom.from, to: lineTo.to })
+const SCROLL_ANCHOR_KEY = 'md-decoration-scroll-anchor'
+
+function getScrollAnchor(view) {
+  const scrollDOM = view.scrollDOM
+  const top = scrollDOM.scrollTop
+  const block = view.elementAtHeight(top + scrollDOM.clientTop)
+  const line = view.lineBlockAt(block.from)
+  return {
+    pos: block.from,
+    // Distance from the block's top edge to the current scroll position.
+    offset: top - line.top,
+    left: scrollDOM.scrollLeft
   }
-  return ranges
 }
 
-/**
- * Check if a region overlaps with any cursor line range.
- */
-function isCursorOnRegion(region, cursorRanges) {
-  return cursorRanges.some(cr => region.from <= cr.to && region.to >= cr.from)
+function restoreScrollAnchor(view, anchor) {
+  view.requestMeasure({
+    key: SCROLL_ANCHOR_KEY,
+    read() {
+      const line = view.lineBlockAt(Math.min(anchor.pos, view.state.doc.length))
+      return line.top + anchor.offset
+    },
+    write(top) {
+      const maxTop = Math.max(0, view.scrollDOM.scrollHeight - view.scrollDOM.clientHeight)
+      view.scrollDOM.scrollTop = Math.max(0, Math.min(top, maxTop))
+      view.scrollDOM.scrollLeft = Math.min(anchor.left, Math.max(0, view.scrollDOM.scrollWidth - view.scrollDOM.clientWidth))
+    }
+  })
 }
 
 /**
  * Build decorations for the entire document.
- * Core logic: if cursor is on a region, show syntax marks; otherwise, hide them and show rendered result.
+ * Core logic: if a selected region contains the cursor, show syntax marks;
+ * otherwise, hide them and show rendered result. Only the selected block is
+ * expanded — adjacent blocks and blank lines remain in their preview state.
  */
 function buildDecorations(view) {
   const { state } = view
   const doc = state.doc.toString()
   const regions = parseMarkdownRegions(doc)
-  const cursorRanges = getCursorLineRanges(state)
+  const selectionRanges = getSelectionLineRanges(state)
   const builder = new RangeSetBuilder()
 
   // We need to collect all decorations and sort them by from position
   const decos = []
 
   for (const region of regions) {
-    const cursorOn = isCursorOnRegion(region, cursorRanges)
+    const cursorOn = isRegionSelected(region, selectionRanges, state.doc)
 
     switch (region.type) {
       case 'heading': {
@@ -297,12 +322,14 @@ function buildDecorations(view) {
       }
 
       case 'blockquote': {
-        const { markFrom, markTo } = region.meta
-        decos.push({ from: region.from, to: region.to, deco: blockquoteDeco })
-        if (!cursorOn) {
-          decos.push({ from: markFrom, to: markTo, deco: syntaxHiddenDeco })
-        } else {
-          decos.push({ from: markFrom, to: markTo, deco: syntaxVisibleDeco })
+        const { marks } = region.meta
+        for (let lineNum = region.meta.startLine + 1; lineNum <= region.meta.endLine + 1; lineNum++) {
+          const line = state.doc.line(lineNum)
+          decos.push({ from: line.from, to: line.from, deco: blockquoteDeco, isLine: true })
+        }
+        const markDeco = cursorOn ? blockquoteMarkVisibleDeco : blockquoteMarkHiddenDeco
+        for (const mark of marks) {
+          decos.push({ from: mark.from, to: mark.to, deco: markDeco })
         }
         break
       }
@@ -334,21 +361,29 @@ function buildDecorations(view) {
       }
 
       case 'code-block': {
-        // Apply line decoration to each line in the code block
-        const startLine = state.doc.lineAt(region.from)
-        const endLine = state.doc.lineAt(region.to)
-        for (let lineNum = startLine.number; lineNum <= endLine.number; lineNum++) {
+        // Apply the same line decoration to every line that belongs to the
+        // fenced region. The range is resolved from parser line numbers, so it
+        // cannot spill into a neighboring heading/quote or across blank lines.
+        for (let lineNum = region.meta.startLine + 1; lineNum <= region.meta.endLine + 1; lineNum++) {
           const line = state.doc.line(lineNum)
           decos.push({ from: line.from, to: line.from, deco: codeBlockDeco, isLine: true })
         }
-        // Hide fence markers when cursor is not on the block
-        if (!cursorOn) {
-          const firstLine = state.doc.lineAt(region.from)
-          const lastLine = state.doc.lineAt(region.to)
-          // Hide opening fence
-          decos.push({ from: firstLine.from, to: firstLine.to, deco: syntaxHiddenDeco })
-          // Hide closing fence
-          decos.push({ from: lastLine.from, to: lastLine.to, deco: syntaxHiddenDeco })
+
+        if (cursorOn) {
+          decos.push({ from: region.meta.open.from, to: region.meta.open.to, deco: fenceMarkVisibleDeco })
+        } else {
+          // Preview state hides the full fence syntax while keeping the line
+          // height. The language label is part of the opening fence syntax.
+          decos.push({ from: region.meta.openPrefix.from, to: region.meta.openPrefix.to, deco: fenceMarkHiddenDeco })
+        }
+
+        // An unclosed fence has no closing marker to hide or reveal.
+        if (region.meta.close) {
+          if (cursorOn) {
+            decos.push({ from: region.meta.close.from, to: region.meta.close.to, deco: fenceMarkVisibleDeco })
+          } else {
+            decos.push({ from: region.meta.closePrefix.from, to: region.meta.closePrefix.to, deco: fenceMarkHiddenDeco })
+          }
         }
         break
       }
@@ -386,9 +421,18 @@ export const markdownDecorationPlugin = ViewPlugin.fromClass(
     }
 
     update(update) {
-      if (update.docChanged || update.selectionSet || update.viewportChanged) {
-        this.decorations = buildDecorations(update.view)
-      }
+      if (!(update.docChanged || update.selectionSet)) return
+
+      // Cursor movement is a decoration-only change. Keep the rendered block at
+      // the same viewport position when it expands/collapses. Explicit
+      // scroll-into-view (e.g. selection commands) must still be respected.
+      const shouldAnchorScroll = !update.docChanged && !update.transactions.some(transaction =>
+        transaction.scrollIntoView ||
+        transaction.effects.some(effect => effect.is(EditorView.scrollIntoView))
+      )
+      const anchor = shouldAnchorScroll ? getScrollAnchor(update.view) : null
+      this.decorations = buildDecorations(update.view)
+      if (anchor) restoreScrollAnchor(update.view, anchor)
     }
   },
   {
