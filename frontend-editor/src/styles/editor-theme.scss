@@ -102,30 +102,86 @@
 }
 
 // === Code Block ===
-.md-code-block {
+// 这些 class 直接挂在 .cm-line 元素上；连续代码行共享同一个圆角盒，
+// 垂直方向的 margin/padding 只由“盒顶行 / 盒底行”承担，保证相邻行
+// 展开/收起时起止不错位、背景无缝。
+.cm-line.md-code-block {
   font-family: $font-mono;
   font-size: $fs-sm;
   background: $bg-code-block;
   color: #d4d4d8;
-  border-radius: $r-lg;
-  padding: $sp-4;
-  margin: $sp-2 0;
+  // 覆盖基础 .cm-line 的 1px 上下内边距，保证连续行背景无缝
+  padding: 0 $sp-4;
+}
 
-  .cm-line { padding: 0; }
+// 盒顶：编辑态是开围栏行（--open）；预览态开围栏塌缩，让位给首个
+// 正文行（--content-first）
+.cm-line.md-code-block--open,
+.cm-line.md-code-block--content-first {
+  border-top-left-radius: $r-lg;
+  border-top-right-radius: $r-lg;
+  padding-top: $sp-4;
+  margin-top: $sp-2;
+}
+
+// 盒底：编辑态是闭围栏行（--close）；预览态闭围栏塌缩，让位给末个
+// 正文行（--content-last）
+.cm-line.md-code-block--close,
+.cm-line.md-code-block--content-last {
+  border-bottom-left-radius: $r-lg;
+  border-bottom-right-radius: $r-lg;
+  padding-bottom: $sp-4;
+  margin-bottom: $sp-2;
+}
+
+// 预览态：围栏行（``` / ~~~）整体塌缩为零高度，不残留深色底条，
+// 也不与相邻块争夺垂直空间；圆角/padding 已移交给相邻正文行
+.cm-line.md-fence-line--open-collapsed,
+.cm-line.md-fence-line--close-collapsed {
+  font-size: 0;
+  line-height: 0;
+  height: 0;
+  min-height: 0;
+  padding: 0 !important;
+  margin: 0;
+  border-radius: 0;
+  background: transparent;
+  overflow: hidden;
+}
+
+// 空代码块（开闭围栏在相邻两行且无正文）：预览态用开围栏行保留一条
+// 细缝，标记这里确实存在一个空块，点击即可展开
+.cm-line.md-fence-line--solo-collapsed {
+  font-size: 0;
+  line-height: 10px;
+  height: 10px;
+  min-height: 0;
+  padding: 0 $sp-4;
+  margin: $sp-2 0;
+  background: $bg-code-block;
+  border-radius: $r-lg;
+  overflow: hidden;
+}
+
+// 编辑态：围栏字符弱化高亮，与正文代码区分
+.md-fence-mark {
+  color: #71717a;
 }
 
 // === Blockquote ===
-.md-blockquote {
+// class 直接挂在 .cm-line 上；连续引用行成组，竖线无缝衔接，
+// 垂直间距只挂在组首/组末，避免逐行切碎导致起止错位
+.cm-line.md-blockquote {
   border-left: 2px solid $accent;
+  // 覆盖基础 .cm-line 的 1px 上下内边距，保证连续行竖线无缝
+  padding-top: 0;
+  padding-bottom: 0;
   padding-left: $sp-4;
   color: $text-2;
-  margin: $sp-2 0;
 }
 
-.md-blockquote-mark {
-  color: $accent;
-  opacity: 0.3;
-}
+.md-blockquote--first { margin-top: $sp-2; }
+.md-blockquote--last { margin-bottom: $sp-2; }
 
 // === Link ===
 .md-link {
